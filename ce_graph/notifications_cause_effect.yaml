@@ -1,0 +1,248 @@
+causes:
+  # subdomain 1: ownership
+  - id: 1
+    description: The workflow's owner is "engineering".
+  - id: 2
+    description: The workflow's owner is a current January employee.
+  - id: 3
+    description: The workflow contains a list of followers.
+
+  # subdomain 2: Asana Failure
+  - id: 4
+    description: The workflow specifies an SLA for failure.
+  - id: 5
+    description: The workflow requests failure notifications to be sent to Asana
+  - id: 6
+    description: The workflow requests additional language be appended to the description of the Asana task that reports its failure.
+  - id: 7
+    description: The workflow requests one or more additional projects be added to the Asana task that reports its failure.
+  - id: 8
+    description: The terminal task of the workflow requests attachment(s) to be attached to the Asana task that reports its failure
+  - id: 9
+    description: The terminal task of the workflow requests additional messaging to be appended to the descriptions of Asana tasks that report its failure
+
+  # subdomain 3: Asana Success
+  - id: 10
+    description: The workflow specifies an SLA to follow up on success
+  - id: 11
+    description: The workflow requests a success notification to be sent to Asana
+  - id: 12
+    description: The workflow requests additional language be added to the Asana task that reports its success.
+  - id: 13
+    description: The workflow requests one or more projects be added to the Asana task that reports its success.
+  - id: 14
+    description: The terminal task of the workflow requests attachments to be attached to to the Asana task that reports its success
+  - id: 15
+    description: The terminal task of the workflow requests additional messaging to be appended to to the descriptions of the Asana task that reports its success
+
+  # subdomain 4: slack success
+  - id: 16
+    description: The workflow requests a success notification to be sent to Slack
+
+  # subdomain 5: execution details
+  - id: 17
+    description: The workflow was triggered in Automat Live
+  - id: 18
+    description: The workflow was triggered via cron
+  - id: 19
+    description: The workflow was triggered via the "Retry Last Task" button.
+  - id: 20
+    description: The workflow terminated with a status of "failed".
+  - id: 21
+    description: The workflow terminated with a status of "succeeded".
+
+intermediary nodes:
+  # COMMENT From a design perspective, maybe change 23.1 to "workflow fails"? 
+  - id: 23.1
+    description: the workflow is a valid workflow.
+  - id: 23.2
+    description: a workflow failed after using "retry last task".
+
+effects:
+  - id: 24
+    description: A PagerDuty incident is created
+  - id: 25
+    description: An asana task is created with a link to the job whose termination created the event.
+  - id: 26
+    description: An asana task is assigned to the user that executed the workflow
+  - id: 27
+    description: An asana task is assigned to the user that owns the workflow
+  - id: 28
+    description: An asana task is assigned to the January override.
+  - id: 29
+    description: The due date of the asana task is today's date + the failure SLA.
+  - id: 30
+    description: The due date of the asana task is today's date + the success SLA.
+  - id: 31
+    description: The asana task contains messaging associated with all failures of the associated workflow.
+  - id: 32
+    description: The asana task contains messaging associated with all failures of the terminal task on the associated workflow.
+  - id: 33
+    description: The asana task contains messaging associated with all successes of the associated workflow.
+  - id: 34
+    description: The asana task contains messaging associated with all successes of the terminal task on the associated workflow.
+  - id: 35
+    description: The asana task is associated with the "Automat Workflow Failures" Projects
+  - id: 36
+    description: The asana task is associated with projects that all failures of the associated workflow are associated with.
+  - id: 37
+    description: The asana task is associated with projects that all successes of the associated workflow are associated with.
+  - id: 38
+    description: The asana task is has the workflow's followers as collaborators.
+  - id: 39
+    description: The asana task contains attachments associated with all failures of the terminal task on the associated workflow.
+  - id: 40
+    description: The asana task contains attachments associated with all successes of the terminal task on the associated workflow.
+
+  - id: 40.1
+    description: A slack message is sent containing a link to the terminated job result, indicating that a job succeeded.
+  - id: 41
+    description: A slack message is sent to the user who executed the workflow
+  - id: 42
+    description: A slack message is sent to the user who owns the workflow
+  - id: 42.1
+    description: A slack message is sent to the January Override
+  - id: 43
+    description: The slack message is received the workflow's followers
+
+constraints:
+  # M: if node is True, masks are False
+
+  # if a workflow failed due to "retry last task"...
+  - type: M
+    node: 23.2
+    masks:
+      - 24 # a PD alert is not set
+      - 25 # an asana task is not created
+      - 40.1 # a slack message is not sent
+
+  # E: only 1 of nodes can be True at a time.
+
+  # Engineering or Ops ownership?
+  - type: E
+    nodes:
+      - 1
+      - 2
+    # success and failure (execution)
+  - type: E
+    nodes:
+      - 21
+      - 22 # COMMENT  what is 22?
+
+  # R: for restricted to be True, node must be True
+  # COMMENT Could you explain? does this mean that if any(26,41) then 25?
+  # asana side-effects
+  - type: R
+    node: 25
+    restricted: !eval range(26, 41)
+
+  # slack side-effects
+  - type: R
+    node: 40.1
+    restricted:
+      - 41
+      - 42
+      - 42.1
+      - 43
+
+  # in order for a workflow to succeed or fail, its config must be valid
+  - type: R
+    node: 23.1
+    restricted:
+      - 21
+      - 22 # COMMENT  what is 22?
+
+relationships:
+  - effect: 23.1 # the workflow is valid
+    causes:
+      - NOT: # it is the case that NONE of the conditions of the OR below are true
+        - OR:
+          - 1 AND ANY (3 thru 18) # eng owns but other settings configured
+          - OR: # ops owns and either:
+            # COMMENT does the failure task need to be configured explicitly?
+            - (NOT 5 OR NOT 6) # one of failure SLA and asana failure task is not configured
+            - (11 AND NOT 10) # asana success task is configured and success SLA is not.
+  - effect: 23.2
+    causes:
+      # COMMENT What is 20.1?
+      - 20.1 AND 21 # the execution event was a failure triggered by "Retry Last Task".
+  - effect: 24 # PD
+    causes:
+      - AND:
+        - 1 # eng owns
+        - 21 # failed
+  - effect: 25 # Asana ticket created
+    causes:
+      AND:
+        - NOT 1 # ops owns
+        - OR:
+          - 21 # execution failed
+          - 22 AND 11 # execution succeeded and ops asked for success task
+  - effect: 26 # asana ticket assigned to user who ran workflow
+    causes:
+      - 19 # workflow triggered in Automat live
+  - effect: 27 # asana ticket assigned to user who owns workflow
+    causes:
+      AND:
+        - 2 # workflow owner is current Jan employee
+        - 20 # workflow triggered via cron
+  - effect: 28 # asana ticket assigned to january override
+    causes:
+      AND:
+        - NOT (1 AND 2) # workflow owner neither ops nor a current Jan employee
+        - 20 # workflow triggered via cron
+  - effect: 29 # due date is today + Failure SLA
+    causes:
+      - 21 # execution failed
+  - effect: 30 # due date is today + success SLA
+    causes:
+      - 22 # execution succeeded
+  - effect: 31 # asana description contains workflow-level failure messaging
+    causes: 
+      - 7
+  - effect: 32 # asana description contains tasks-level failure messaging
+    causes:
+      - 15.1
+  - effect: 33 # asana description contains workflow-level success messaging
+    causes: 
+      - 12
+  - effect: 34 # asana description contains tasks-level success messaging
+    causes:
+      - 18
+  - effect: 35 # asana task on the "Automat Workflow Failures board"
+    causes:
+      - 21
+  - effect: 36 # asana task on other boards associated with this workflow's failure
+    causes:
+      - 8
+  - effect: 37 # asana task on boards associated with this workflow's success
+    causes:
+      - 8
+  - effect: 38 # asana task has followers
+    causes:
+      - 3
+  - effect: 39 # failure attachments
+    causes:
+      - 15
+  - effect: 40 # success attachments
+    causes:
+      - 17
+  - effect: 40.1 # slack message sent
+    causes:
+      AND:
+        - NOT 1
+        - 14 AND 22 # success notifications turned on for Slack
+  - effect: 41 # slack msg sent to job runner
+    causes:
+      - 19
+  - effect: 42 # slack msg sent to job owner
+    causes:
+      - 20
+  - effect: 42.3 # slack msg sent to January override
+    causes:
+      AND:
+        - NOT (1 AND 2) # workflow owner neither ops nor a current Jan employee
+        - 20 # workflow triggered via cron
+  - effect: 43 # slack msg sent to workflow followers
+    causes:
+      - 3
